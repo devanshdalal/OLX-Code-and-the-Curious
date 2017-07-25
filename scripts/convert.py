@@ -3,10 +3,13 @@ import numpy as np
 import sys,csv
 import time
 from heapq import nlargest
-import dill
+import operator
 
 curr_time=time.time()
 ADID_LIMIT = 2922042
+USER_LIMIT = 15068
+CATEG_LIMIT = 10
+categories=[800,815,806,859,811,853,881,888,887,362]
 
 converter={'user_id':np.int64,'ad_id':np.int64}
 # 'images_count':np.int64,'ad_impressions':np.int64,'ad_views':np.int64,'ad_messages':np.int64}
@@ -19,9 +22,11 @@ print('pds loaded', time.time()-curr_time)
 curr_time=time.time()
 
 a2c = [-1]*ADID_LIMIT
-for i,row in ad_data.iterrows():
+for i,row in ad.iterrows():
 	ad_id,c_id=row['ad_id'],row['category_id']
-	a2c[ad_id]=c_id
+	if row['enabled']:
+		a2c[ad_id]=c_id
+print('a2c computed', time.time()-curr_time)
 # for x in ud.columns:
 # 	y=np.array(ud[x].unique())
 # 	print(x,y,len(y))
@@ -31,7 +36,6 @@ for i,row in ad_data.iterrows():
 # 	y=np.array(ad[x].unique())
 # 	print(x,y,len(y))
 
-category_ids=[800,815,806,859,811,853,881,888,887,362]
 
 
 def create_submission(values,user_messages,name):
@@ -45,14 +49,14 @@ def popularity_based(user_data,ad_data,user_messages):
 		ad_id,ad_views=row['ad_id'],row['ad_views']	
 		frequency[ad_id] = max(ad_views,frequency[ad_id])
 
-	categories={x:[] for x in category_ids}
+	categories_={x:[] for x in category_ids}
 	for i,row in ad_data.iterrows():
 		ad_id,c_id=row['ad_id'],row['category_id']
 		a2c[ad_id]=c_id
-		categories[c_id].append(ad_id)
+		categories_[c_id].append(ad_id)
 
 	for x in category_ids:
-		categories[x] = nlargest(10, categories[x],key=lambda y: frequency[y])
+		categories_[x] = nlargest(10, categories_[x],key=lambda y: frequency[y])
 
 	values=[[] for i in range(10)]
 	for i,row in user_messages.iterrows():
@@ -61,7 +65,7 @@ def popularity_based(user_data,ad_data,user_messages):
 			if c_id not in category_ids:
 				values[x].append( '[]' )
 			else:
-				values[x].append( str(categories[c_id][:x]) )
+				values[x].append( str(categories_[c_id][:x]) )
 	for x in range(1,10):
 		create_submission(values[x],umt,str(x)+'.csv')
 
@@ -84,21 +88,62 @@ def popularity_based(user_data,ad_data,user_messages):
 # print('stats done', time.time()-curr_time)
 
 
-def item_item_collaborative(user_data,ad_data,user_messages):	
+def user_item_collaborative(user_data,user_messages,user_messages_test):	
 	
+	user_all = [ {j:set() for j in categories} for i in range(USER_LIMIT)]
 	for i,row in user_data.iterrows():
-		ad_id,ad_views=row['ad_id'],row['ad_views']	
-		frequency[ad_id] = max(ad_views,frequency[ad_id])
+		u_id,ad_id=row['user_id'],row['ad_id']
+		if(i%100==0):
+			print('uall',i,u_id)
+		c_id=a2c[ad_id]
+		if c_id==-1:
+			continue
+		user_all[u_id][c_id].add(ad_id)
 
-
-	values=[[] for i in range(10)]
 	for i,row in user_messages.iterrows():
-		u_id,c_id=row['user_id'],row['category_id']
-		for x in range(1,10):
-			if c_id not in category_ids:
-				values[x].append( '[]' )
-			else:
-				values[x].append( str(categories[c_id][:x]) )
-	for x in range(1,10):
-		create_submission(values[x],umt,str(x)+'.csv')
+		u_id,ads,c_id=row['user_id'],eval(row['ads']),row['category_id']
+		print('um',i,u_id)
+		user_all[u_id][c_id]=user_all[u_id][c_id].union(set(ads))
+		# print('user_ad[',u_id,']',user_ad[u_id])
 
+	user_sim ={j:[ {} for j in range(USER_LIMIT) ] for j in categories}
+
+	for i in range(USER_LIMIT):
+		for j in range(i+1,USER_LIMIT):
+			for k in categories:
+				ins=user_all[i][k].intersection(user_all[j][k])
+				if len(ins)>0:
+					sim = len(ins)*1.0/len(user_all[i][k].union(user_all[j][k]))
+					user_sim[k][i][j]=sim
+					user_sim[k][j][i]=sim
+			if(len(user_sim[k][i])>0):
+				print('u',i,len(user_sim[k][i]))
+
+	# print('user_ad[',u_id,']',user_ad[u_id])	 
+
+	values=[]
+	for i,row in user_messages_test.iterrows():
+		if(i%10==0):
+			print('umt',i)
+		u_id,c_id=row['user_id'],row['category_id']
+
+		# print('user_sim[u_id]',user_sim[u_id])
+		Y = nlargest(5,list(user_sim[c_id][u_id]),key=lambda y:user_sim[c_id][u_id][y])
+		if(Y==[]):
+			values.append( '[]' )
+			continue
+		print(Y)
+		accu = set()
+		for x in Y:
+			for xx in user_all[x][c_id]:
+				accu.add(xx)
+				# print('accu',accu)
+		accu=accu.difference(user_all[u_id][c_id])
+		if len(accu):
+			print('found',i,len(accu))
+		values.append( str(list(accu)) )
+	create_submission(values,user_messages_test,'s.csv')
+
+curr_time=time.time()
+user_item_collaborative(ud.ix[:100],um.ix[:100],umt.ix[:100])
+print('user_item_collaborative computed', time.time()-curr_time)
