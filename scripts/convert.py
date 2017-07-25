@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import sys,csv
 import time
+import dill
 from heapq import nlargest
 import operator
 
@@ -86,40 +87,51 @@ def popularity_based(user_data,ad_data,user_messages):
 
 # print('stats',cc,len(um),len(umt))
 # print('stats done', time.time()-curr_time)
+def f7(seq,seen):
+    seen_add = seen.add
+    return [x for x in seq if not (x in seen or seen_add(x))]
 
-
-def user_item_collaborative(user_data,user_messages,user_messages_test):	
+def user_item_collaborative(saved,user_data,user_messages,user_messages_test):
 	
-	user_all = [ {j:set() for j in categories} for i in range(USER_LIMIT)]
-	for i,row in user_data.iterrows():
-		u_id,ad_id=row['user_id'],row['ad_id']
-		if(i%100==0):
-			print('uall',i,u_id)
-		c_id=a2c[ad_id]
-		if c_id==-1:
-			continue
-		user_all[u_id][c_id].add(ad_id)
+	user_sim,user_all=None,None
+	if saved:
+		with open('data/user_item.pkl', 'rb') as f:
+			user_sim = dill.load(f)
+			user_all = dill.load(f)
+	else:
+		user_all = [ {j:set() for j in categories} for i in range(USER_LIMIT)]
+		for i,row in user_data.iterrows():
+			u_id,ad_id=row['user_id'],row['ad_id']
+			c_id=a2c[ad_id]
+			if c_id==-1:
+				continue
+			user_all[u_id][c_id].add(ad_id)
+			print('uall',i,u_id,len(user_all[u_id][c_id]))
 
-	for i,row in user_messages.iterrows():
-		u_id,ads,c_id=row['user_id'],eval(row['ads']),row['category_id']
-		print('um',i,u_id)
-		user_all[u_id][c_id]=user_all[u_id][c_id].union(set(ads))
-		# print('user_ad[',u_id,']',user_ad[u_id])
+		for i,row in user_messages.iterrows():
+			u_id,ads,c_id=row['user_id'],eval(row['ads']),row['category_id']
+			print('um',i,u_id)
+			user_all[u_id][c_id]=user_all[u_id][c_id].union(set(ads))
+			# print('user_ad[',u_id,']',user_ad[u_id])
 
-	user_sim ={j:[ {} for j in range(USER_LIMIT) ] for j in categories}
+		user_sim ={j:[ {} for j in range(USER_LIMIT) ] for j in categories}
 
-	for i in range(USER_LIMIT):
-		for j in range(i+1,USER_LIMIT):
-			for k in categories:
-				ins=user_all[i][k].intersection(user_all[j][k])
-				if len(ins)>0:
-					sim = len(ins)*1.0/len(user_all[i][k].union(user_all[j][k]))
-					user_sim[k][i][j]=sim
-					user_sim[k][j][i]=sim
-			if(len(user_sim[k][i])>0):
-				print('u',i,len(user_sim[k][i]))
-
-	# print('user_ad[',u_id,']',user_ad[u_id])	 
+		for i in range(min(USER_LIMIT,len(user_data)) ):
+			print('user_sim',i)
+			for j in range(i+1,USER_LIMIT):
+				for k in categories:
+					ins=user_all[i][k].intersection(user_all[j][k])
+					if len(ins)>0:
+						sim = len(ins)*1.0/len(user_all[i][k].union(user_all[j][k]))
+						user_sim[k][i][j]=sim
+						user_sim[k][j][i]=sim
+				# if(len(user_sim[k][i])>0):
+				# 	print('u',i,len(user_sim[k][i]))
+		# print('user_ad[',u_id,']',user_ad[u_id])	 
+		with open('data/user_item.pkl', 'wb') as f:
+			dill.dump(user_sim,f)
+			dill.dump(user_all,f)
+	
 
 	values=[]
 	for i,row in user_messages_test.iterrows():
@@ -128,22 +140,87 @@ def user_item_collaborative(user_data,user_messages,user_messages_test):
 		u_id,c_id=row['user_id'],row['category_id']
 
 		# print('user_sim[u_id]',user_sim[u_id])
-		Y = nlargest(5,list(user_sim[c_id][u_id]),key=lambda y:user_sim[c_id][u_id][y])
+		Y = nlargest(2,list(user_sim[c_id][u_id]),key=lambda y:user_sim[c_id][u_id][y])
 		if(Y==[]):
 			values.append( '[]' )
 			continue
-		print(Y)
-		accu = set()
+		# print('Y',Y)
+		accu = []
 		for x in Y:
 			for xx in user_all[x][c_id]:
-				accu.add(xx)
+				accu.append(xx)
 				# print('accu',accu)
-		accu=accu.difference(user_all[u_id][c_id])
+		accu=f7(accu,user_all[u_id][c_id])
 		if len(accu):
 			print('found',i,len(accu))
-		values.append( str(list(accu)) )
+		values.append( str(list(accu[:10])) )
 	create_submission(values,user_messages_test,'s.csv')
 
 curr_time=time.time()
-user_item_collaborative(ud.ix[:100],um.ix[:100],umt.ix[:100])
+user_item_collaborative(1,ud,um,umt)
 print('user_item_collaborative computed', time.time()-curr_time)
+
+# def item_item_collaborative(saved,user_data,user_messages,user_messages_test):
+	
+# 	item_sim,item_all=None
+# 	if saved:
+# 		with open('data/item_item.pkl', 'rb') as f:
+# 			item_sim = dill.load(f)
+# 			item_all = dill.load(f)
+# 	else:
+# 		item_all = [ {j:set() for j in categories} for i in range(USER_LIMIT)]
+# 		for i,row in user_data.iterrows():
+# 			u_id,ad_id=row['user_id'],row['ad_id']
+# 			c_id=a2c[ad_id]
+# 			if c_id==-1:
+# 				continue
+# 			item_all[u_id][c_id].add(ad_id)
+# 			print('uall',i,u_id,len(user_all[u_id][c_id]))
+
+# 		for i,row in user_messages.iterrows():
+# 			u_id,ads,c_id=row['user_id'],eval(row['ads']),row['category_id']
+# 			print('um',i,u_id)
+# 			user_all[u_id][c_id]=user_all[u_id][c_id].union(set(ads))
+# 			# print('user_ad[',u_id,']',user_ad[u_id])
+
+# 		user_sim ={j:[ {} for j in range(USER_LIMIT) ] for j in categories}
+
+# 		for i in range(min(USER_LIMIT,len(user_data)) ):
+# 			print('user_sim',i)
+# 			for j in range(i+1,USER_LIMIT):
+# 				for k in categories:
+# 					ins=user_all[i][k].intersection(user_all[j][k])
+# 					if len(ins)>0:
+# 						sim = len(ins)*1.0/len(user_all[i][k].union(user_all[j][k]))
+# 						user_sim[k][i][j]=sim
+# 						user_sim[k][j][i]=sim
+# 				# if(len(user_sim[k][i])>0):
+# 				# 	print('u',i,len(user_sim[k][i]))
+# 		# print('user_ad[',u_id,']',user_ad[u_id])	 
+# 		with open('data/user_item.pkl', 'wb') as f:
+# 			dill.dump(user_sim,f)
+# 			dill.dump(user_all,f)
+	
+
+# 	values=[]
+# 	for i,row in user_messages_test.iterrows():
+# 		if(i%10==0):
+# 			print('umt',i)
+# 		u_id,c_id=row['user_id'],row['category_id']
+
+# 		# print('user_sim[u_id]',user_sim[u_id])
+# 		Y = nlargest(2,list(user_sim[c_id][u_id]),key=lambda y:user_sim[c_id][u_id][y])
+# 		if(Y==[]):
+# 			values.append( '[]' )
+# 			continue
+# 		# print('Y',Y)
+# 		accu = set()
+# 		for x in Y:
+# 			for xx in user_all[x][c_id]:
+# 				accu.add(xx)
+# 				# print('accu',accu)
+# 		accu=accu.difference(user_all[u_id][c_id])
+# 		if len(accu):
+# 			print('found',i,len(accu))
+# 		values.append( str(list(accu)) )
+# 	create_submission(values,user_messages_test,'s.csv')
